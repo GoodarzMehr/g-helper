@@ -1048,11 +1048,13 @@ namespace GHelper.USB
 
             static int tempFreeze = AppConfig.Get("temp_freeze", 20);
             static int tempCold = AppConfig.Get("temp_cold", 40);
+            static int tempMid = AppConfig.Get("temp_mid", 40);
             static int tempWarm = AppConfig.Get("temp_warm", 65);
             static int tempHot = AppConfig.Get("temp_hot", 90);
 
             static Color colorFreeze = ColorTranslator.FromHtml(AppConfig.GetString("color_freeze", "#0000FF"));
             static Color colorCold = ColorTranslator.FromHtml(AppConfig.GetString("color_cold", "#008000"));
+            static Color colorTempMid = ColorTranslator.FromHtml(AppConfig.GetString("color_temp_mid", "#00FF00"));
             static Color colorWarm = ColorTranslator.FromHtml(AppConfig.GetString("color_warm", "#FFFF00"));
             static Color colorHot = ColorTranslator.FromHtml(AppConfig.GetString("color_hot", "#FF0000"));
 
@@ -1145,7 +1147,8 @@ namespace GHelper.USB
                 Color color = colorFreeze;
 
                 if (cpuTemp < tempCold) color = ColorUtils.GetWeightedAverage(colorFreeze, colorCold, ((float)cpuTemp - tempFreeze) / (tempCold - tempFreeze));
-                else if (cpuTemp < tempWarm) color = ColorUtils.GetWeightedAverage(colorCold, colorWarm, ((float)cpuTemp - tempCold) / (tempWarm - tempCold));
+                else if (cpuTemp < tempMid) color = ColorUtils.GetWeightedAverage(colorCold, colorTempMid, ((float)cpuTemp - tempCold) / (tempMid - tempCold));
+                else if (cpuTemp < tempWarm) color = ColorUtils.GetWeightedAverage(colorTempMid, colorWarm, ((float)cpuTemp - tempMid) / (tempWarm - tempMid));
                 else if (cpuTemp < tempHot) color = ColorUtils.GetWeightedAverage(colorWarm, colorHot, ((float)cpuTemp - tempWarm) / (tempHot - tempWarm));
                 else color = colorHot;
 
