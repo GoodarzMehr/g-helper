@@ -1054,7 +1054,7 @@ namespace GHelper.USB
 
             static Color colorFreeze = ColorTranslator.FromHtml(AppConfig.GetString("color_freeze", "#0000FF"));
             static Color colorCold = ColorTranslator.FromHtml(AppConfig.GetString("color_cold", "#008000"));
-            static Color colorTempMid = ColorTranslator.FromHtml(AppConfig.GetString("color_temp_mid", "#00FF00"));
+            static Color colorTempMid = ColorTranslator.FromHtml(AppConfig.GetString("color_mid", "#00FF00"));
             static Color colorWarm = ColorTranslator.FromHtml(AppConfig.GetString("color_warm", "#FFFF00"));
             static Color colorHot = ColorTranslator.FromHtml(AppConfig.GetString("color_hot", "#FF0000"));
 
