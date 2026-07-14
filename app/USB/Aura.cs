@@ -139,6 +139,7 @@ namespace GHelper.USB
         static int discoNoFlicker = AppConfig.Get("disco_no_flicker", 0);
         static int discoPattern = AppConfig.Get("disco_pattern", 1);
         static int discoColorPattern = AppConfig.Get("disco_color_pattern", 0);
+        static int discoUnevenFrequencyGrouping = AppConfig.Get("disco_uneven_frequency_grouping", 0);
         static double discoColorCycleDuration = AppConfig.GetDouble("disco_color_cycle_duration", 10.0);
         static double discoIntensityMultiplier = AppConfig.GetDouble("disco_intensity_multiplier", 1.0);
         static double discoBrightnessEntropy = AppConfig.GetDouble("disco_brightness_entropy", 0.2);
@@ -883,7 +884,7 @@ namespace GHelper.USB
 
             _discoHueOffsets = new double[packetMap.Length];
 
-            int _num_zones = isStrix4Zone || (BacklightType == AuraBacklightType.PerKey) ? 4 : AURA_ZONES;
+            int _numZones = isStrix4Zone || (BacklightType == AuraBacklightType.PerKey) ? 4 : AURA_ZONES;
 
             byte[] zoneMap = packetZoneMod;
 
@@ -895,14 +896,14 @@ namespace GHelper.USB
                 {
                     _discoHueOffsets[i] = _discoRng.NextDouble();
 
-                    if (discoColorPattern == 1) _discoHueOffsets[i] = zoneMap[i] / (double)_num_zones;
+                    if (discoColorPattern == 1) _discoHueOffsets[i] = zoneMap[i] / (double)_numZones;
                     else if (discoColorPattern == 2) _discoHueOffsets[i] = 0.27;
                 }
                     
-            _discoZoneHueOffsets = new double[_num_zones];
+            _discoZoneHueOffsets = new double[_numZones];
             
             if (_discoUseRandom)
-                for (int zone = 0; zone < _num_zones; zone++)
+                for (int zone = 0; zone < _numZones; zone++)
                     _discoZoneHueOffsets[zone] = _discoRng.NextDouble();
 
             _discoCycleStartMs = DateTimeOffset.Now.ToUnixTimeMilliseconds();
@@ -1163,17 +1164,36 @@ namespace GHelper.USB
             if (Math.Abs(now - lastAudioPresent) < 50) return;
             lastAudioPresent = now;
 
-            int num_zones = isStrix4Zone || (BacklightType == AuraBacklightType.PerKey) ? 4 : AURA_ZONES;
+            int numZones = isStrix4Zone || (BacklightType == AuraBacklightType.PerKey) ? 4 : AURA_ZONES;
 
-            if (fftMag.Length < num_zones) return;
+            if (fftMag.Length < numZones) return;
 
-            int groupBands = (int)Math.Ceiling((double)fftMag.Length / (2 * num_zones));
-            double[] bars = new double[num_zones];
-            double max = 0;
             
-            for (int i = 0; i < num_zones; i++)
+            double max = 0;
+            double[] bars = new double[numZones];
+            double[] bandNums = new double[numZones];
+            
+            int groupBands = (int)Math.Ceiling((double)fftMag.Length / (2 * numZones));
+
+            if (discoUnevenFrequencyGrouping == 1)
             {
-                for (int j = 0; j < groupBands; j++)
+                if (numZones == 8)
+                {
+                    bandNums = [1, 2, 8, 10, 22, 22, 43, fftMag.Length - 108];
+                }
+                else
+                {
+                    bandNums = [3, 18, 44, fftMag.Length - 65];
+                } 
+            }
+            else
+            {
+                Array.Fill(bandNums, groupBands);
+            }
+            
+            for (int i = 0; i < numZones; i++)
+            {
+                for (int j = 0; j < bandNums[i]; j++)
                 {
                     int index = i * groupBands + j;
                     
@@ -1208,15 +1228,15 @@ namespace GHelper.USB
                     // Find the strongest band for relative normalization.
                     double bandMax = 0;
                     
-                    for (int i = 0; i < num_zones; i++)
+                    for (int i = 0; i < numZones; i++)
                         if (bars[i] > bandMax) bandMax = bars[i];
 
                     double RMSValue = Math.Min(AudioVisualizer.Shared.GetRMSValue() * 4.0, 1.0);
 
-                    double[] relIntensity = new double[num_zones];
+                    double[] relIntensity = new double[numZones];
                     
                     if (bandMax > 0)
-                        for (int i = 0; i < num_zones; i++)
+                        for (int i = 0; i < numZones; i++)
                             relIntensity[i] = bars[i] / bandMax;
 
                     double t = (DateTimeOffset.Now.ToUnixTimeMilliseconds() - _discoCycleStartMs) / 1000.0;
@@ -1238,7 +1258,7 @@ namespace GHelper.USB
                         for (int ledIndex = 0; ledIndex < packetMap.Length; ledIndex++)
                         {
                             byte zone = zoneMap[ledIndex];
-                            double rel = zone < num_zones ? relIntensity[zone] : 0.0;
+                            double rel = zone < numZones ? relIntensity[zone] : 0.0;
                             double intensity = rel * RMSValue * discoIntensityMultiplier;
                             double prob = discoNoFlicker == 1 ? 1.0 : Math.Min(1.0, intensity);
                             bool lit = _discoRng.NextDouble() < prob;
@@ -1260,9 +1280,9 @@ namespace GHelper.USB
                     }
                     else if (isStrix4Zone)
                     {
-                        Color[] zoneColors = new Color[num_zones];
+                        Color[] zoneColors = new Color[numZones];
                         
-                        for (int z = 0; z < num_zones; z++)
+                        for (int z = 0; z < numZones; z++)
                         {
                             double value = relIntensity[z] * RMSValue * discoIntensityMultiplier;
                             
