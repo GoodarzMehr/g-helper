@@ -202,6 +202,13 @@ public static class AppConfig
             ? result : empty;
     }
 
+    public static double GetDouble(string name, double empty = -1)
+    {
+        lock (configLock)
+            return config.TryGetValue(name, out var val) && double.TryParse(val?.ToString(), out double result)
+            ? result : empty;
+    }
+
     public static bool Is(string name)
     {
         return Get(name) == 1;

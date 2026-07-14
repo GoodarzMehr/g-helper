@@ -7,10 +7,12 @@ namespace GHelper.Helpers
     public class AudioVisualizer : IMMNotificationClient
     {
         public static readonly AudioVisualizer Shared = new();
+        private double RMSValue;
 
         private readonly HashSet<Action<double[]>> subscribers = new();
 
         private double[]? audioValues;
+        private double[]? _hannWindow;
         private WasapiCapture? capture;
         private string? captureDeviceId;
         private MMDeviceEnumerator? enumerator;
@@ -18,8 +20,20 @@ namespace GHelper.Helpers
         private readonly object _lock = new();
         private volatile bool _running;
         private volatile bool _stopping;
+        private int _isProcessingFrame = 0;
+        private long _lastFrameTime = 0;
+        
+        static double minTimeBetweenFramesMs = 1000.0 / AppConfig.Get("disco_fps", 40);
 
         public bool IsRunning => _running;
+
+        public double GetRMSValue()
+        {
+            lock (_lock)
+            {
+                return RMSValue;
+            }
+        }
 
         public bool Subscribe(Action<double[]> handler)
         {
@@ -57,7 +71,15 @@ namespace GHelper.Helpers
                     captureDeviceId = device.ID;
 
                     var fmt = capture.WaveFormat;
-                    audioValues = new double[fmt.SampleRate / 1000];
+                    
+                    audioValues = new double[fmt.SampleRate / 100];
+
+                    int N = audioValues.Length;
+                    
+                    _hannWindow = new double[N];
+                    
+                    for (int i = 0; i < N; i++)
+                        _hannWindow[i] = 0.5 * (1.0 - Math.Cos(2.0 * Math.PI * i / (N - 1)));
 
                     capture.DataAvailable += Capture_DataAvailable;
                     capture.StartRecording();
@@ -134,17 +156,59 @@ namespace GHelper.Helpers
                 for (int i = 0; i < bufferSampleCount; i++)
                     audioValues[i] = BitConverter.ToSingle(e.Buffer, i * bytesPerSample);
 
-            double[] padded = FftSharp.Pad.ZeroPad(audioValues);
+            double sumSq = 0;
+            
+            for (int i = 0; i < bufferSampleCount; i++)
+                sumSq += audioValues[i] * audioValues[i];
+
+            RMSValue = Math.Sqrt(sumSq / bufferSampleCount);
+ 
+            double[] windowed = new double[bufferSampleCount];
+            
+            if (_hannWindow is not null)
+                for (int i = 0; i < bufferSampleCount; i++)
+                    windowed[i] = audioValues[i] * _hannWindow[i];
+            else
+                Array.Copy(audioValues, windowed, bufferSampleCount);
+
+            double[] padded = FftSharp.Pad.ZeroPad(windowed);
             var fft = FftSharp.FFT.Forward(padded);
             double[] mag = FftSharp.FFT.Magnitude(fft);
-
-            Action<double[]>[] snapshot;
-            lock (_lock) snapshot = subscribers.ToArray();
-
-            foreach (var sub in snapshot)
+            
+            if (Interlocked.CompareExchange(ref _isProcessingFrame, 1, 0) == 0)
             {
-                try { sub.Invoke(mag); }
-                catch (Exception ex) { Logger.WriteLine("AudioVisualizer: subscriber threw: " + ex); }
+                Action<double[]>[] snapshot;
+                
+                lock (_lock) snapshot = subscribers.ToArray();
+
+                // Offload to a background thread so NAudio can keep listening without lag.
+                Task.Run(() =>
+                {
+                    try
+                    {
+                        // Check if enough time has passed to send a new frame.
+                        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+                        
+                        double msSinceLastFrame = (now - _lastFrameTime) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+
+                        if (msSinceLastFrame >= minTimeBetweenFramesMs)
+                        {
+                            _lastFrameTime = now;
+                            
+                            // Actually send the data to Aura/Subscribers.
+                            foreach (var sub in snapshot)
+                            {
+                                try { sub.Invoke(mag); }
+                                catch (Exception ex) { Logger.WriteLine("AudioVisualizer: subscriber threw: " + ex); }
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        // Release for the next frame.
+                        Interlocked.Exchange(ref _isProcessingFrame, 0);
+                    }
+                });
             }
         }
 

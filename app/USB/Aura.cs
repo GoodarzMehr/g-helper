@@ -2,6 +2,7 @@
 using GHelper.Helpers;
 using GHelper.Input;
 using GHelper.Peripherals;
+using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
@@ -58,6 +59,7 @@ namespace GHelper.USB
         ZONETEST = 25,
         AUDIO = 26,
         AUDIOPULSE = 27,
+        DISCO = 28,
     }
 
     public enum AuraSpeed : int
@@ -127,6 +129,19 @@ namespace GHelper.USB
         static double envBrightness;
         static double smoothedHue;
         const double audioDecay = 0.7;
+
+        private static double[] _discoHueOffsets = Array.Empty<double>();
+        private static double[] _discoZoneHueOffsets = Array.Empty<double>();
+        private static bool _discoUseRandom = false;
+        private static long _discoCycleStartMs = 0;
+        private static readonly Random _discoRng = new Random();
+
+        static int discoNoFlicker = AppConfig.Get("disco_no_flicker", 0);
+        static int discoPattern = AppConfig.Get("disco_pattern", 1);
+        static int discoColorPattern = AppConfig.Get("disco_color_pattern", 0);
+        static double discoColorCycleDuration = AppConfig.GetDouble("disco_color_cycle_duration", 10.0);
+        static double discoIntensityMultiplier = AppConfig.GetDouble("disco_intensity_multiplier", 1.0);
+        static double discoBrightnessEntropy = AppConfig.GetDouble("disco_brightness_entropy", 0.2);
 
         static Aura()
         {
@@ -204,6 +219,7 @@ namespace GHelper.USB
             modes[AuraMode.BATTERY] = "Battery";
             modes[AuraMode.AUDIO] = "Audio Spectrum";
             modes[AuraMode.AUDIOPULSE] = "Audio Pulse";
+            modes[AuraMode.DISCO] = "Disco";
 
             if (isStrixKb)
             {
@@ -621,6 +637,75 @@ namespace GHelper.USB
 
         };
 
+        static byte[] packetZoneMod = new byte[]
+        {
+                    /* VDN   VUP   MICM  HPFN  ARMC  */
+                         0,    0,    1,    1,    1,
+        /* ESC          F1    F2    F3    F4    F5    F6    F7    F8    F9   F10   F11   F12              DEL15 DEL17  PAUS  PRT   HOM   */
+             0,          0,    0,    1,    1,    1,    1,    2,    2,    2,    3,    3,    3,                3,   3,    3,    3,    3,
+        /* BKTK    1     2     3     4     5     6     7     8     9     0     -     =   BSPC  BSPC  BSPC PLY15  NMLK  NMDV  NMTM  NMMI  */
+             0,    0,    0,    0,    1,    1,    1,    1,    2,    2,    2,    3,    3,    3,    3,    3,    3,    3,    3,    3,    3,
+        /* TAB     Q     W     E     R     T     Y     U     I     O     P     [     ]     \              STP15  NM7   NM8   NM9   NMPL  */
+             0,    0,    0,    0,    1,    1,    1,    1,    2,    2,    2,    3,    3,    3,                3,    3,    3,    3,    3,
+        /* CPLK    A     S     D     F     G     H     J     K     L     ;     "     #   ENTR  ENTR  ENTR PRV15  NM4   NM5   NM6   NMPL  */
+             0,    0,    0,    0,    1,    1,    1,    1,    2,    2,    2,    3,    3,    3,    3,    3,    3,    3,    3,    3,    3,
+        /* LSFT  ISO\    Z     X     C     V     B     N     M     ,     .     /   RSFT  RSFT  RSFT  ARWU NXT15  NM1   NM2   NM3   NMER  */
+             0,    0,    0,    0,    1,    1,    1,    1,    2,    2,    2,    3,    3,    3,    3,    3,    3,    3,    3,    3,    3,
+        /* LCTL  LFNC  LWIN  LALT              SPC               RALT  RFNC  RCTL        ARWL  ARWD  ARWR PRT15        NM0   NMPD  NMER  */
+             0,    0,    0,    0,              1,                  2,    2,    3,          3,    3,    3,    3,          3,    3,    3,
+        /* LB1   LB1   LB3                                                               ARW?  ARW?  ARW?  ARW?        LB4   LB5   LB6   */
+             5,    5,    4,                                                                3,    3,    3,    3,          6,    7,    7,
+        /* KSTN  LOGO  LIDL  LIDR  */
+             3,    0,    0,    3,
+
+        };
+
+        static byte[] packetZoneHorizontal = new byte[]
+        {
+                    /* VDN   VUP   MICM  HPFN  ARMC  */
+                         3,    3,    3,    3,    3,
+        /* ESC          F1    F2    F3    F4    F5    F6    F7    F8    F9   F10   F11   F12              DEL15 DEL17  PAUS  PRT   HOM   */
+             2,          2,    2,    2,    2,    2,    2,    2,    2,    2,    2,    2,    2,                2,    2,    2,    2,    2,
+        /* BKTK    1     2     3     4     5     6     7     8     9     0     -     =   BSPC  BSPC  BSPC PLY15  NMLK  NMDV  NMTM  NMMI  */
+             2,    2,    2,    2,    2,    2,    2,    2,    2,    2,    2,    2,    2,    2,    2,    2,    2,    2,    2,    2,    2,
+        /* TAB     Q     W     E     R     T     Y     U     I     O     P     [     ]     \              STP15  NM7   NM8   NM9   NMPL  */
+             1,    1,    1,    1,    1,    1,    1,    1,    1,    1,    1,    1,    1,    1,                1,    1,    1,    1,    1,
+        /* CPLK    A     S     D     F     G     H     J     K     L     ;     "     #   ENTR  ENTR  ENTR PRV15  NM4   NM5   NM6   NMPL  */
+             1,    1,    1,    1,    1,    1,    1,    1,    1,    1,    1,    1,    1,    1,    1,    1,    1,    1,    1,    1,    1,
+        /* LSFT  ISO\    Z     X     C     V     B     N     M     ,     .     /   RSFT  RSFT  RSFT  ARWU NXT15  NM1   NM2   NM3   NMER  */
+             0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
+        /* LCTL  LFNC  LWIN  LALT              SPC               RALT  RFNC  RCTL        ARWL  ARWD  ARWR PRT15        NM0   NMPD  NMER  */
+             0,    0,    0,    0,              0,                  0,    0,    0,          0,    0,    0,    0,          0,    0,    0,
+        /* LB1   LB1   LB3                                                               ARW?  ARW?  ARW?  ARW?        LB4   LB5   LB6   */
+             5,    5,    4,                                                                0,    0,    0,    0,          6,    7,    7,
+        /* KSTN  LOGO  LIDL  LIDR  */
+             3,    0,    0,    3,
+
+        };
+
+        static byte[] packetZoneCircular = new byte[]
+        {
+                    /* VDN   VUP   MICM  HPFN  ARMC  */
+                         3,    3,    2,    2,    1,
+        /* ESC          F1    F2    F3    F4    F5    F6    F7    F8    F9   F10   F11   F12              DEL15 DEL17  PAUS  PRT   HOM   */
+             3,          3,    2,    2,    1,    1,    1,    1,    2,    2,    3,    3,    3,                3,   3,    3,    3,    3,
+        /* BKTK    1     2     3     4     5     6     7     8     9     0     -     =   BSPC  BSPC  BSPC PLY15  NMLK  NMDV  NMTM  NMMI  */
+             3,    3,    2,    2,    1,    1,    1,    1,    1,    1,    2,    2,    3,    3,    3,    3,    3,    3,    3,    3,    3,
+        /* TAB     Q     W     E     R     T     Y     U     I     O     P     [     ]     \              STP15  NM7   NM8   NM9   NMPL  */
+             3,    2,    2,    1,    1,    0,    0,    0,    1,    1,    2,    2,    3,    3,                3,    3,    3,    3,    3,
+        /* CPLK    A     S     D     F     G     H     J     K     L     ;     "     #   ENTR  ENTR  ENTR PRV15  NM4   NM5   NM6   NMPL  */
+             3,    2,    2,    1,    1,    0,    0,    0,    1,    1,    2,    2,    3,    3,    3,    3,    3,    3,    3,    3,    3,
+        /* LSFT  ISO\    Z     X     C     V     B     N     M     ,     .     /   RSFT  RSFT  RSFT  ARWU NXT15  NM1   NM2   NM3   NMER  */
+             3,    3,    2,    2,    1,    1,    0,    0,    1,    1,    2,    2,    3,    3,    3,    3,    3,    3,    3,    3,    3,
+        /* LCTL  LFNC  LWIN  LALT              SPC               RALT  RFNC  RCTL        ARWL  ARWD  ARWR PRT15        NM0   NMPD  NMER  */
+             3,    3,    3,    2,              1,                  2,    2,    3,          3,    3,    3,    3,          3,    3,    3,
+        /* LB1   LB1   LB3                                                               ARW?  ARW?  ARW?  ARW?        LB4   LB5   LB6   */
+             0,    0,    0,                                                                3,    3,    3,    3,          6,    7,    7,
+        /* KSTN  LOGO  LIDL  LIDR  */
+             3,    0,    0,    3,
+
+        };
+
         static byte[] packet4Zone = new byte[]
         {
 /*01        Z1  Z2  Z3  Z4  NA  NA  KeyZone */
@@ -726,6 +811,113 @@ namespace GHelper.USB
 
             Buffer.BlockCopy(keyBuf, 3 * keySet, buffer, 9, 3 * (ledCount - keySet));
             AsusHid.SetFeatureAura(buffer);
+        }
+
+        private static void ApplyDirectPerKey(Color[] keyColors, bool init = false)
+        {
+            if (!backlight) return;
+
+            const byte keySet = 167;
+            const byte ledCount = 178;
+            const ushort mapSize = 3 * ledCount;
+            const byte ledsPerPacket = 16;
+
+            byte[] buffer = new byte[64];
+            byte[] keyBuf = new byte[mapSize];
+
+            buffer[0] = AsusHid.AURA_ID;
+            buffer[1] = 0xBC;
+            buffer[2] = 0;
+            buffer[3] = 1;
+            buffer[4] = 1;
+            buffer[5] = 1;
+            buffer[6] = 0;
+            buffer[7] = 0x10;
+
+            if (init || initDirect)
+            {
+                initDirect = false;
+                AsusHid.SetFeatureAura(new byte[] { AsusHid.AURA_ID, 0xBC, 1 });
+                Thread.Sleep(50);
+            }
+
+            Array.Clear(keyBuf, 0, keyBuf.Length);
+
+            for (int ledIndex = 0; ledIndex < packetMap.Length; ledIndex++)
+            {
+                ushort offset = (ushort)(3 * packetMap[ledIndex]);
+                
+                Color c = keyColors[ledIndex];
+                
+                keyBuf[offset]     = c.R;
+                keyBuf[offset + 1] = c.G;
+                keyBuf[offset + 2] = c.B;
+            }
+
+            for (int i = 0; i < keySet; i += ledsPerPacket)
+            {
+                byte ledsRemaining = (byte)(keySet - i);
+                
+                if (ledsRemaining < ledsPerPacket)
+                    buffer[7] = ledsRemaining;
+
+                buffer[6] = (byte)i;
+                
+                Buffer.BlockCopy(keyBuf, 3 * i, buffer, 9, 3 * buffer[7]);
+                AsusHid.SetFeatureAura(buffer);
+                PreciseSleep(1.0);
+            }
+
+            buffer[4] = 0x04;
+            buffer[5] = 0x00;
+            buffer[6] = 0x00;
+            buffer[7] = 0x00;
+
+            Buffer.BlockCopy(keyBuf, 3 * keySet, buffer, 9, 3 * (ledCount - keySet));
+            AsusHid.SetFeatureAura(buffer);
+        }
+
+        private static void InitDiscoColors()
+        {
+            _discoUseRandom = (Color1.R == 0 && Color1.G == 0 && Color1.B == 0);
+
+            _discoHueOffsets = new double[packetMap.Length];
+
+            int _num_zones = isStrix4Zone || (BacklightType == AuraBacklightType.PerKey) ? 4 : AURA_ZONES;
+
+            byte[] zoneMap = packetZoneMod;
+
+            if (discoPattern == 1) zoneMap = packetZoneHorizontal;
+            else if (discoPattern == 2) zoneMap = packetZoneCircular;
+            
+            if (_discoUseRandom)
+                for (int i = 0; i < packetMap.Length; i++)
+                {
+                    _discoHueOffsets[i] = _discoRng.NextDouble();
+
+                    if (discoColorPattern == 1) _discoHueOffsets[i] = zoneMap[i] / (double)_num_zones;
+                    else if (discoColorPattern == 2) _discoHueOffsets[i] = 0.27;
+                }
+                    
+            _discoZoneHueOffsets = new double[_num_zones];
+            
+            if (_discoUseRandom)
+                for (int zone = 0; zone < _num_zones; zone++)
+                    _discoZoneHueOffsets[zone] = _discoRng.NextDouble();
+
+            _discoCycleStartMs = DateTimeOffset.Now.ToUnixTimeMilliseconds();
+        }
+
+        public static void PreciseSleep(double milliseconds)
+        {
+            long ticks = (long)(milliseconds * Stopwatch.Frequency / 1000.0);
+            long startTicks = Stopwatch.GetTimestamp();
+
+            if (milliseconds >= 2.0)
+                Thread.Sleep((int)(milliseconds - 1));
+
+            while (Stopwatch.GetTimestamp() - startTicks < ticks)
+                Thread.SpinWait(10);
         }
 
         public static void ApplyDirectLightbar(Color[] color)
@@ -836,11 +1028,11 @@ namespace GHelper.USB
             }
 
             timer.Stop();
-            if (Mode != AuraMode.AUDIO && Mode != AuraMode.AUDIOPULSE) StopAudio();
+            if (Mode != AuraMode.AUDIO && Mode != AuraMode.AUDIOPULSE && Mode != AuraMode.DISCO) StopAudio();
 
             Logger.WriteLine($"AuraMode: {Mode}");
 
-            if (Mode == AuraMode.AUDIO || Mode == AuraMode.AUDIOPULSE)
+            if (Mode == AuraMode.AUDIO || Mode == AuraMode.AUDIOPULSE || Mode == AuraMode.DISCO)
             {
                 StartAudio();
                 return;
@@ -957,26 +1149,40 @@ namespace GHelper.USB
             envBrightness = 0;
             smoothedHue = 0;
 
+            if (Mode == AuraMode.DISCO) InitDiscoColors();
+
             AudioVisualizer.Shared.Subscribe(OnAudioSpectrum);
         }
 
         private static void OnAudioSpectrum(double[] fftMag)
         {
             if (!backlight || sessionLock) return;
-            if (Mode != AuraMode.AUDIO && Mode != AuraMode.AUDIOPULSE) return;
+            if (Mode != AuraMode.AUDIO && Mode != AuraMode.AUDIOPULSE && Mode != AuraMode.DISCO) return;
 
             long now = DateTimeOffset.Now.ToUnixTimeMilliseconds();
             if (Math.Abs(now - lastAudioPresent) < 50) return;
             lastAudioPresent = now;
 
-            int bands = AURA_ZONES;
-            if (fftMag.Length < bands) return;
+            int num_zones = isStrix4Zone || (BacklightType == AuraBacklightType.PerKey) ? 4 : AURA_ZONES;
 
-            double[] bars = new double[bands];
+            if (fftMag.Length < num_zones) return;
+
+            int groupBands = (int)Math.Ceiling((double)fftMag.Length / (2 * num_zones));
+            double[] bars = new double[num_zones];
             double max = 0;
-            for (int i = 0; i < bands; i++)
+            
+            for (int i = 0; i < num_zones; i++)
             {
-                bars[i] = Math.Sqrt(fftMag[i] * 10000);
+                for (int j = 0; j < groupBands; j++)
+                {
+                    int index = i * groupBands + j;
+                    
+                    if (index < fftMag.Length)
+                        bars[i] += fftMag[index];
+                }
+                
+                bars[i] = Math.Sqrt(bars[i] * 1000);
+                
                 if (bars[i] > max) max = bars[i];
             }
 
@@ -993,6 +1199,111 @@ namespace GHelper.USB
 
             try
             {
+                if (Mode == AuraMode.DISCO)
+                {
+                    if (_discoHueOffsets.Length == 0) return;
+
+                    Speed = (AuraSpeed)AppConfig.Get(GetSpeedKey(), AppConfig.Get("aura_speed"));
+
+                    // Find the strongest band for relative normalization.
+                    double bandMax = 0;
+                    
+                    for (int i = 0; i < num_zones; i++)
+                        if (bars[i] > bandMax) bandMax = bars[i];
+
+                    double RMSValue = Math.Min(AudioVisualizer.Shared.GetRMSValue() * 4.0, 1.0);
+
+                    double[] relIntensity = new double[num_zones];
+                    
+                    if (bandMax > 0)
+                        for (int i = 0; i < num_zones; i++)
+                            relIntensity[i] = bars[i] / bandMax;
+
+                    double t = (DateTimeOffset.Now.ToUnixTimeMilliseconds() - _discoCycleStartMs) / 1000.0;
+                    
+                    double cycleSpeed = 1.0 / discoColorCycleDuration;
+
+                    if (Speed == AuraSpeed.Fast) cycleSpeed *= 2.0;
+                    else if (Speed == AuraSpeed.Slow) cycleSpeed *= 0.5;
+
+                    if (BacklightType == AuraBacklightType.PerKey)
+                    {
+                        Color[] frame = new Color[packetMap.Length];
+                        
+                        byte[] zoneMap = packetZoneMod;
+
+                        if (discoPattern == 1) zoneMap = packetZoneHorizontal;
+                        else if (discoPattern == 2) zoneMap = packetZoneCircular;
+
+                        for (int ledIndex = 0; ledIndex < packetMap.Length; ledIndex++)
+                        {
+                            byte zone = zoneMap[ledIndex];
+                            double rel = zone < num_zones ? relIntensity[zone] : 0.0;
+                            double intensity = rel * RMSValue * discoIntensityMultiplier;
+                            double prob = discoNoFlicker == 1 ? 1.0 : Math.Min(1.0, intensity);
+                            bool lit = _discoRng.NextDouble() < prob;
+                            
+                            if (lit && rel > 0.05)
+                            {
+                                double value = Math.Min(1.0, Math.Max(0.05, intensity + (_discoRng.NextDouble() - 0.5) * discoBrightnessEntropy));
+                                
+                                frame[ledIndex] = _discoUseRandom
+                                    ? new ColorUtils.HSV { Hue = (_discoHueOffsets[ledIndex] + t * cycleSpeed) % 1.0, Saturation = 1.0, Value = value }.ToRGB()
+                                    : Color.FromArgb((byte)(Color1.R * value), (byte)(Color1.G * value), (byte)(Color1.B * value));
+                            }
+                            else
+                            {
+                                frame[ledIndex] = Color.Black;
+                            }
+                        }
+                        ApplyDirectPerKey(frame);
+                    }
+                    else if (isStrix4Zone)
+                    {
+                        Color[] zoneColors = new Color[num_zones];
+                        
+                        for (int z = 0; z < num_zones; z++)
+                        {
+                            double value = relIntensity[z] * RMSValue * discoIntensityMultiplier;
+                            
+                            if (_discoUseRandom)
+                            {
+                                double hue = (_discoZoneHueOffsets[z] + t * cycleSpeed) % 1.0;
+                                
+                                zoneColors[z] = new ColorUtils.HSV { Hue = hue, Saturation = 1.0, Value = value }.ToRGB();
+                            }
+                            else
+                            {
+                                zoneColors[z] = Color.FromArgb((byte)(Color1.R * value), (byte)(Color1.G * value), (byte)(Color1.B * value));
+                            }
+                        }
+
+                        ApplyDirect(zoneColors);
+                    }
+                    else
+                    {
+                        Color dimmed;
+                        
+                        if (_discoUseRandom)
+                        {
+                            double hue = (_discoZoneHueOffsets.Length > 0 ? _discoZoneHueOffsets[0] : 0.0 + t * cycleSpeed) % 1.0;
+                            
+                            dimmed = new ColorUtils.HSV { Hue = hue, Saturation = 1.0, Value = RMSValue }.ToRGB();
+                        }
+                        else
+                        {
+                            dimmed = Color.FromArgb((byte)(Color1.R * RMSValue), (byte)(Color1.G * RMSValue), (byte)(Color1.B * RMSValue));
+                        }
+                        
+                        if (isACPI)
+                            Program.acpi.TUFKeyboardRGB(0, dimmed, 0, null);
+                        else
+                            ApplyDirect(dimmed);
+                    }
+                    
+                    return;
+                }
+
                 if (Mode == AuraMode.AUDIOPULSE)
                 {
                     Color dimmed = Color.FromArgb(
@@ -1022,14 +1333,14 @@ namespace GHelper.USB
                 {
                     int dominant = 1;
                     double dominantWeighted = bars[1];
-                    for (int i = 2; i < bands; i++)
+                    for (int i = 2; i < AURA_ZONES; i++)
                     {
                         double w = bars[i] * (1 + (i - 1) * 0.15);
                         if (w > dominantWeighted) { dominantWeighted = w; dominant = i; }
                     }
                     if (max > maxAvg * 0.3)
                     {
-                        double targetHue = (baseHue + (dominant - 1) / (double)(bands - 2) * (2.0 / 3.0)) % 1.0;
+                        double targetHue = (baseHue + (dominant - 1) / (double)(AURA_ZONES - 2) * (2.0 / 3.0)) % 1.0;
                         smoothedHue = smoothedHue * 0.6 + targetHue * 0.4;
                     }
 
