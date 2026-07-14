@@ -1167,12 +1167,11 @@ namespace GHelper.USB
             int numZones = isStrix4Zone || (BacklightType == AuraBacklightType.PerKey) ? 4 : AURA_ZONES;
 
             if (fftMag.Length < numZones) return;
-
             
             double max = 0;
             double[] bars = new double[numZones];
-            double[] bandNums = new double[numZones];
-            
+            int[] bandNums = new int[numZones];
+
             int groupBands = (int)Math.Ceiling((double)fftMag.Length / (2 * numZones));
 
             if (discoUnevenFrequencyGrouping == 1)
@@ -1190,17 +1189,21 @@ namespace GHelper.USB
             {
                 Array.Fill(bandNums, groupBands);
             }
+
+            int startIndex = 0;
             
             for (int i = 0; i < numZones; i++)
             {
+                if (i > 0) startIndex += bandNums[i - 1];
+                
                 for (int j = 0; j < bandNums[i]; j++)
                 {
-                    int index = i * groupBands + j;
-                    
+                    int index = startIndex + j;
+
                     if (index < fftMag.Length)
-                        bars[i] += fftMag[index];
+                        bars[i] += fftMag[index] / bandNums[i] * groupBands;
                 }
-                
+
                 bars[i] = Math.Sqrt(bars[i] * 1000);
                 
                 if (bars[i] > max) max = bars[i];
