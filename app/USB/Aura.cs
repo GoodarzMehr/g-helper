@@ -1174,15 +1174,26 @@ namespace GHelper.USB
 
             int groupBands = (int)Math.Ceiling((double)fftMag.Length / (2 * numZones));
 
-            if (discoUnevenFrequencyGrouping == 1)
+            if (discoUnevenFrequencyGrouping == 2)
             {
                 if (numZones == 8)
                 {
-                    bandNums = [1, 2, 8, 10, 22, 22, 43, fftMag.Length - 108];
+                    bandNums = [1, 1, 1, 1, 17, 22, 64, fftMag.Length - 107];
                 }
                 else
                 {
-                    bandNums = [3, 18, 44, fftMag.Length - 65];
+                    bandNums = [1, 2, 40, fftMag.Length - 43];
+                } 
+            }
+            else if (discoUnevenFrequencyGrouping == 1)
+            {
+                if (numZones == 8)
+                {
+                    bandNums = [1, 2, 8, 10, 22, 21, 43, fftMag.Length - 107];
+                }
+                else
+                {
+                    bandNums = [3, 18, 43, fftMag.Length - 64];
                 } 
             }
             else
