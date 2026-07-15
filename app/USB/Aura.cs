@@ -1161,7 +1161,7 @@ namespace GHelper.USB
             if (Mode != AuraMode.AUDIO && Mode != AuraMode.AUDIOPULSE && Mode != AuraMode.DISCO) return;
 
             long now = DateTimeOffset.Now.ToUnixTimeMilliseconds();
-            if (Math.Abs(now - lastAudioPresent) < 50) return;
+            if (Math.Abs(now - lastAudioPresent) < 10) return;
             lastAudioPresent = now;
 
             int numZones = isStrix4Zone || (BacklightType == AuraBacklightType.PerKey) ? 4 : AURA_ZONES;
@@ -1344,7 +1344,7 @@ namespace GHelper.USB
                         (byte)(c1.R * curvedBrightness),
                         (byte)(c1.G * curvedBrightness),
                         (byte)(c1.B * curvedBrightness));
-                    if (isStrix) ApplyDirect(Enumerable.Repeat(dimmed, AURA_ZONES).ToArray());
+                    if (numZones != AURA_ZONES) ApplyDirect(Enumerable.Repeat(dimmed, AURA_ZONES).ToArray());
                     else ApplyDirect(dimmed);
                     return;
                 }
@@ -1354,27 +1354,29 @@ namespace GHelper.USB
                 if (isStrix)
                 {
                     Color[] colors = new Color[AURA_ZONES];
-                    for (int i = 0; i < AURA_ZONES; i++)
+                    for (int i = 0; i < numZones; i++)
                     {
-                        double hue = (baseHue + (double)i / (AURA_ZONES - 1) * (2.0 / 3.0)) % 1.0;
+                        double hue = (baseHue + (double)i / (numZones - 1) * (2.0 / 3.0)) % 1.0;
                         double ratio = Math.Min(1.0, bars[i] / maxAvg);
                         double v = ratio * ratio * ratio;
                         colors[i] = new ColorUtils.HSV { Hue = hue, Saturation = 1.0, Value = v }.ToRGB();
                     }
+                    for (int i = numZones; i < AURA_ZONES; i++)
+                        colors[i] = colors[i - numZones];
                     ApplyDirect(colors);
                 }
                 else
                 {
                     int dominant = 1;
                     double dominantWeighted = bars[1];
-                    for (int i = 2; i < AURA_ZONES; i++)
+                    for (int i = 2; i < numZones; i++)
                     {
                         double w = bars[i] * (1 + (i - 1) * 0.15);
                         if (w > dominantWeighted) { dominantWeighted = w; dominant = i; }
                     }
                     if (max > maxAvg * 0.3)
                     {
-                        double targetHue = (baseHue + (dominant - 1) / (double)(AURA_ZONES - 2) * (2.0 / 3.0)) % 1.0;
+                        double targetHue = (baseHue + (dominant - 1) / (double)(numZones - 2) * (2.0 / 3.0)) % 1.0;
                         smoothedHue = smoothedHue * 0.6 + targetHue * 0.4;
                     }
 
