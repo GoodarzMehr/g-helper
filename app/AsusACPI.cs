@@ -312,7 +312,7 @@ public class AsusACPI
 
         if (AppConfig.IsIntelHX())
         {
-            MaxTotal = 195;
+            MaxTotal = 175;
         }
 
         if (AppConfig.DynamicBoost5())
