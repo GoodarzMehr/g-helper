@@ -866,7 +866,7 @@ namespace GHelper.USB
                 
                 Buffer.BlockCopy(keyBuf, 3 * i, buffer, 9, 3 * buffer[7]);
                 AsusHid.SetFeatureAura(buffer);
-                PreciseSleep(1.0);
+                PreciseSleep(0.1);
             }
 
             buffer[4] = 0x04;
@@ -1172,36 +1172,37 @@ namespace GHelper.USB
             double[] bars = new double[numZones];
             int[] bandNums = new int[numZones];
 
-            int groupBands = (int)Math.Ceiling((double)fftMag.Length / (2 * numZones));
+            int groupBands = (int)Math.Ceiling(((double)fftMag.Length - 1) / (2 * numZones));
 
-            if (discoUnevenFrequencyGrouping == 2)
-            {
-                if (numZones == 8)
-                {
-                    bandNums = [1, 1, 1, 1, 17, 22, 64, fftMag.Length - 107];
-                }
+            if (fftMag.Length >= 512)
+                if (discoUnevenFrequencyGrouping == 2)
+                    if (numZones == 8)
+                        bandNums = [1, 1, 1, 2, 38, 42, 128, fftMag.Length - 214];
+                    else
+                        bandNums = [2, 3, 80, fftMag.Length - 81];
+                else if (discoUnevenFrequencyGrouping == 1)
+                    if (numZones == 8)
+                        bandNums = [2, 3, 16, 22, 42, 43, 128, fftMag.Length - 214];
+                    else
+                        bandNums = [5, 38, 85, fftMag.Length - 129];
                 else
-                {
-                    bandNums = [1, 2, 40, fftMag.Length - 43];
-                } 
-            }
-            else if (discoUnevenFrequencyGrouping == 1)
-            {
-                if (numZones == 8)
-                {
-                    bandNums = [1, 2, 8, 10, 22, 21, 43, fftMag.Length - 107];
-                }
-                else
-                {
-                    bandNums = [3, 18, 43, fftMag.Length - 64];
-                } 
-            }
+                    Array.Fill(bandNums, groupBands);
             else
-            {
-                Array.Fill(bandNums, groupBands);
-            }
+                if (discoUnevenFrequencyGrouping == 2)
+                    if (numZones == 8)
+                        bandNums = [1, 1, 1, 1, 17, 22, 64, fftMag.Length - 108];
+                    else
+                        bandNums = [1, 2, 40, fftMag.Length - 44];
+                else if (discoUnevenFrequencyGrouping == 1)
+                    if (numZones == 8)
+                        bandNums = [1, 2, 8, 10, 22, 21, 43, fftMag.Length - 108];
+                    else
+                        bandNums = [3, 18, 43, fftMag.Length - 65];
+                else
+                    Array.Fill(bandNums, groupBands);
+            
 
-            int startIndex = 0;
+            int startIndex = 1;
             
             for (int i = 0; i < numZones; i++)
             {

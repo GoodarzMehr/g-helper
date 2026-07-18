@@ -67,12 +67,14 @@ namespace GHelper.Helpers
 
                 using (MMDevice device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Console))
                 {
-                    capture = new WasapiLoopbackCapture(device);
+                    double loopbackTime = Math.Max(40.0, minTimeBetweenFramesMs - 5);
+                    
+                    capture = new CustomWasapiLoopbackCapture(device, (int)loopbackTime);
                     captureDeviceId = device.ID;
 
                     var fmt = capture.WaveFormat;
                     
-                    audioValues = new double[fmt.SampleRate / 100];
+                    audioValues = new double[fmt.SampleRate / 50];
 
                     int N = audioValues.Length;
                     
@@ -139,63 +141,66 @@ namespace GHelper.Helpers
 
         private void Capture_DataAvailable(object? sender, WaveInEventArgs e)
         {
-            if (capture is null || audioValues is null) return;
+            if (capture is null) return;
 
-            int bytesPerSamplePerChannel = capture.WaveFormat.BitsPerSample / 8;
-            int bytesPerSample = bytesPerSamplePerChannel * capture.WaveFormat.Channels;
-            int bufferSampleCount = e.Buffer.Length / bytesPerSample;
-            if (bufferSampleCount > audioValues.Length) bufferSampleCount = audioValues.Length;
-
-            if (bytesPerSamplePerChannel == 2 && capture.WaveFormat.Encoding == WaveFormatEncoding.Pcm)
-                for (int i = 0; i < bufferSampleCount; i++)
-                    audioValues[i] = BitConverter.ToInt16(e.Buffer, i * bytesPerSample);
-            else if (bytesPerSamplePerChannel == 4 && capture.WaveFormat.Encoding == WaveFormatEncoding.Pcm)
-                for (int i = 0; i < bufferSampleCount; i++)
-                    audioValues[i] = BitConverter.ToInt32(e.Buffer, i * bytesPerSample);
-            else if (bytesPerSamplePerChannel == 4 && capture.WaveFormat.Encoding == WaveFormatEncoding.IeeeFloat)
-                for (int i = 0; i < bufferSampleCount; i++)
-                    audioValues[i] = BitConverter.ToSingle(e.Buffer, i * bytesPerSample);
-
-            double sumSq = 0;
-            
-            for (int i = 0; i < bufferSampleCount; i++)
-                sumSq += audioValues[i] * audioValues[i];
-
-            RMSValue = Math.Sqrt(sumSq / bufferSampleCount);
- 
-            double[] windowed = new double[bufferSampleCount];
-            
-            if (_hannWindow is not null)
-                for (int i = 0; i < bufferSampleCount; i++)
-                    windowed[i] = audioValues[i] * _hannWindow[i];
-            else
-                Array.Copy(audioValues, windowed, bufferSampleCount);
-
-            double[] padded = FftSharp.Pad.ZeroPad(windowed);
-            var fft = FftSharp.FFT.Forward(padded);
-            double[] mag = FftSharp.FFT.Magnitude(fft);
-            
             if (Interlocked.CompareExchange(ref _isProcessingFrame, 1, 0) == 0)
             {
+                byte[] bufferCopy = new byte[e.BytesRecorded];
+                
+                Buffer.BlockCopy(e.Buffer, 0, bufferCopy, 0, e.BytesRecorded);
+
                 Action<double[]>[] snapshot;
                 
                 lock (_lock) snapshot = subscribers.ToArray();
 
-                // Offload to a background thread so NAudio can keep listening without lag.
                 Task.Run(() =>
                 {
                     try
                     {
-                        // Check if enough time has passed to send a new frame.
+                        int bytesPerSamplePerChannel = capture.WaveFormat.BitsPerSample / 8;
+                        int bytesPerSample = bytesPerSamplePerChannel * capture.WaveFormat.Channels;
+                        int bufferSampleCount = bufferCopy.Length / bytesPerSample;
+
+                        if (bufferSampleCount > audioValues.Length) bufferSampleCount = audioValues.Length;
+
+                        if (bytesPerSamplePerChannel == 2 && capture.WaveFormat.Encoding == WaveFormatEncoding.Pcm)
+                            for (int i = 0; i < bufferSampleCount; i++)
+                                audioValues[i] = BitConverter.ToInt16(bufferCopy, i * bytesPerSample);
+                        else if (bytesPerSamplePerChannel == 4 && capture.WaveFormat.Encoding == WaveFormatEncoding.Pcm)
+                            for (int i = 0; i < bufferSampleCount; i++)
+                                audioValues[i] = BitConverter.ToInt32(bufferCopy, i * bytesPerSample);
+                        else if (bytesPerSamplePerChannel == 4 && capture.WaveFormat.Encoding == WaveFormatEncoding.IeeeFloat)
+                            for (int i = 0; i < bufferSampleCount; i++)
+                                audioValues[i] = BitConverter.ToSingle(bufferCopy, i * bytesPerSample);
+                        
+                        double sumSq = 0;
+                        
+                        for (int i = 0; i < bufferSampleCount; i++)
+                            sumSq += audioValues[i] * audioValues[i];
+                        
+                        RMSValue = Math.Sqrt(sumSq / bufferSampleCount);
+            
+                        double[] windowed = new double[bufferSampleCount];
+                        
+                        if (_hannWindow is not null)
+                            for (int i = 0; i < bufferSampleCount; i++)
+                                windowed[i] = audioValues[i] * _hannWindow[i];
+                        else
+                            Array.Copy(audioValues, windowed, bufferSampleCount);
+
+                        double[] padded = FftSharp.Pad.ZeroPad(windowed);
+                        var fft = FftSharp.FFT.Forward(padded);
+                        double[] mag = FftSharp.FFT.Magnitude(fft);
+
                         long now = System.Diagnostics.Stopwatch.GetTimestamp();
                         
                         double msSinceLastFrame = (now - _lastFrameTime) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
 
+                        Logger.WriteLine($"Time since last frame is {msSinceLastFrame} ms, minTimeBetweenFramesMs is {minTimeBetweenFramesMs} ms");
+
                         if (msSinceLastFrame >= minTimeBetweenFramesMs)
                         {
                             _lastFrameTime = now;
-                            
-                            // Actually send the data to Aura/Subscribers.
                             foreach (var sub in snapshot)
                             {
                                 try { sub.Invoke(mag); }
@@ -205,7 +210,6 @@ namespace GHelper.Helpers
                     }
                     finally
                     {
-                        // Release for the next frame.
                         Interlocked.Exchange(ref _isProcessingFrame, 0);
                     }
                 });
