@@ -152,10 +152,6 @@ namespace GHelper.Helpers
                 
                 Buffer.BlockCopy(e.Buffer, 0, bufferCopy, 0, e.BytesRecorded);
 
-                Action<double[]>[] snapshot;
-                
-                lock (_lock) snapshot = subscribers.ToArray();
-
                 Task.Run(() =>
                 {
                     try
