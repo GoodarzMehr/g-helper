@@ -10,6 +10,7 @@ namespace GHelper.Helpers
         private double RMSValue;
 
         private readonly HashSet<Action<double[]>> subscribers = new();
+        private volatile Action<double[]>[] subscriberSnapshot = Array.Empty<Action<double[]>>();
 
         private double[]? audioValues;
         private double[]? _hannWindow;
@@ -42,6 +43,7 @@ namespace GHelper.Helpers
                 if (subscribers.Contains(handler)) return true;
                 if (subscribers.Count == 0 && !StartCapture()) return false;
                 subscribers.Add(handler);
+                subscriberSnapshot = subscribers.ToArray();
                 return true;
             }
         }
@@ -51,6 +53,7 @@ namespace GHelper.Helpers
             lock (_lock)
             {
                 if (!subscribers.Remove(handler)) return;
+                subscriberSnapshot = subscribers.ToArray();
                 if (subscribers.Count == 0) StopCapture();
             }
         }
@@ -201,7 +204,7 @@ namespace GHelper.Helpers
                         if (msSinceLastFrame >= minTimeBetweenFramesMs)
                         {
                             _lastFrameTime = now;
-                            foreach (var sub in snapshot)
+                            foreach (var sub in subscriberSnapshot)
                             {
                                 try { sub.Invoke(mag); }
                                 catch (Exception ex) { Logger.WriteLine("AudioVisualizer: subscriber threw: " + ex); }
