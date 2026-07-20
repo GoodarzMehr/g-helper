@@ -1161,7 +1161,7 @@ namespace GHelper.USB
             if (Mode != AuraMode.AUDIO && Mode != AuraMode.AUDIOPULSE && Mode != AuraMode.DISCO) return;
 
             long now = DateTimeOffset.Now.ToUnixTimeMilliseconds();
-            if (Math.Abs(now - lastAudioPresent) < 10) return;
+            if (Math.Abs(now - lastAudioPresent) < 5) return;
             lastAudioPresent = now;
 
             int numZones = isStrix4Zone || (BacklightType == AuraBacklightType.PerKey) ? 4 : AURA_ZONES;
