@@ -195,8 +195,6 @@ namespace GHelper.Helpers
                         
                         double msSinceLastFrame = (now - _lastFrameTime) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
 
-                        Logger.WriteLine($"Time since last frame is {msSinceLastFrame} ms, minTimeBetweenFramesMs is {minTimeBetweenFramesMs} ms");
-
                         if (msSinceLastFrame >= minTimeBetweenFramesMs)
                         {
                             _lastFrameTime = now;
