@@ -70,7 +70,7 @@ namespace GHelper.Helpers
 
                 using (MMDevice device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Console))
                 {
-                    double loopbackTime = Math.Max(40.0, minTimeBetweenFramesMs - 5);
+                    double loopbackTime = Math.Max(30.0, minTimeBetweenFramesMs - 5);
                     
                     capture = new CustomWasapiLoopbackCapture(device, (int)loopbackTime);
                     captureDeviceId = device.ID;

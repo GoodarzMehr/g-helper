@@ -129,6 +129,7 @@ namespace GHelper.USB
         static double envBrightness;
         static double smoothedHue;
         const double audioDecay = 0.7;
+        private static int _isRenderingAudio = 0;
 
         private static double[] _discoHueOffsets = Array.Empty<double>();
         private static double[] _discoZoneHueOffsets = Array.Empty<double>();
@@ -1161,6 +1162,29 @@ namespace GHelper.USB
         }
 
         private static void OnAudioSpectrum(double[] fftMag)
+        {
+            if (!backlight || sessionLock) return;
+            if (Mode != AuraMode.AUDIO && Mode != AuraMode.AUDIOPULSE && Mode != AuraMode.DISCO) return;
+
+            if (Interlocked.CompareExchange(ref _isRenderingAudio, 1, 0) == 0)
+            {
+                double[] clonedMag = (double[])fftMag.Clone();
+
+                Task.Run(() =>
+                {
+                    try
+                    {
+                        RenderAudioSpectrum(clonedMag);
+                    }
+                    finally
+                    {
+                        Interlocked.Exchange(ref _isRenderingAudio, 0);
+                    }
+                });
+            }
+        }
+        
+        private static void RenderAudioSpectrum(double[] fftMag)
         {
             if (!backlight || sessionLock) return;
             if (Mode != AuraMode.AUDIO && Mode != AuraMode.AUDIOPULSE && Mode != AuraMode.DISCO) return;
